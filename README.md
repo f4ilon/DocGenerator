@@ -34,6 +34,10 @@ Compose starts the API, PostgreSQL, PlantUML server, Prometheus, and Grafana. Th
 5. Search generated text with `GET /search?q=...`.
 6. Estimate generation time with `POST /predict`. Its six validated features are `files`, `funcs`, `complexity`, `cycles`, `doc_before`, and `lang_py`.
 
+## PowerShell demo
+
+With the API already running, execute `.\examples\demo.ps1`. It creates a sample project, parses it, shows the project tree, generates drafts, checks coverage, searches the documentation, and creates a Markdown export. The script displays the export metadata and history but deliberately stops before downloading the file. To use another server URL, pass `-BaseUrl`, for example `.\examples\demo.ps1 -BaseUrl "http://localhost:8001"`.
+
 ZIP and Git uploads accept at most 1000 supported source files and 50 MB of content. The Git loader permits HTTPS clone URLs on GitHub, GitLab, and Bitbucket. JavaScript and Java extraction uses lightweight signature parsing; Python uses the standard-library AST parser.
 
 ## Testing and model training
