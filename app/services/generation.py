@@ -45,10 +45,14 @@ class AIClient:
         args = [name for name in function.params if name != "self"]
         summary = f"Describe the behavior of {function.name.replace('_', ' ')}."
         if style == "jsdoc":
-            parameters = "\n".join(f" * @param {{any}} {name} - Describe this parameter." for name in args)
+            parameters = "\n".join(
+                f" * @param {{any}} {name} - Describe this parameter." for name in args
+            )
             return f"/**\n * {summary}\n{parameters + chr(10) if parameters else ''} */"
         if style == "numpy":
-            parameters = "\n".join(f"{name} : object\n    Describe this parameter." for name in args)
+            parameters = "\n".join(
+                f"{name} : object\n    Describe this parameter." for name in args
+            )
             return f'"""{summary}\n\nParameters\n----------\n{parameters}\n"""'
         if not args:
             return f'"""{summary}"""'

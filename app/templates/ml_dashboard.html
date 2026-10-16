@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>DocGen digital twin</title>
+<style>
+body { font: 16px system-ui; max-width: 850px; margin: 3rem auto; padding: 0 1rem; color: #182230; }
+label { display: inline-grid; gap: .3rem; margin: .5rem; }
+input { padding: .5rem; width: 8rem; }
+button { padding: .7rem 1.2rem; background: #0969da; color: white; border: 0; border-radius: 5px; }
+pre { white-space: pre-wrap; background: #f6f8fa; padding: 1rem; }
+svg { width: 100%; max-width: 600px; background: #f6f8fa; }
+td, th { padding: .3rem .8rem; text-align: left; }
+</style>
+<h1>Generation time digital twin</h1>
+<p>Estimate documentation generation time from project metrics.</p>
+<form id="prediction">
+  <label>Files<input name="files" type="number" value="50" min="1" max="1000" required></label>
+  <label>Functions<input name="funcs" type="number" value="200" min="0" required></label>
+  <label>Complexity<input name="complexity" type="number" value="5" min="1" max="10" step=".1" required></label>
+  <label>Cycles / branches<input name="cycles" type="number" value="10" min="0" required></label>
+  <label>Documented before (%)<input name="doc_before" type="number" value="30" min="0" max="100" step=".1" required></label>
+  <label>Python<input name="lang_py" type="number" value="1" min="0" max="1" required></label>
+  <button>Predict</button>
+</form>
+<pre id="result">Submit project metrics to see a prediction.</pre>
+<h2>Actual vs predicted (held-out test data)</h2>
+<svg viewBox="0 0 500 300" role="img" aria-label="Actual versus predicted generation time">
+  <line x1="45" y1="255" x2="475" y2="255" stroke="#667"/>
+  <line x1="45" y1="20" x2="45" y2="255" stroke="#667"/>
+  <text x="210" y="290">Actual time (seconds)</text>
+  <text transform="translate(16 190) rotate(-90)">Predicted time (seconds)</text>
+  <g id="dots"></g>
+</svg>
+<h2>Feature importance (model coefficients)</h2>
+<table>
+  <thead><tr><th>Feature</th><th>Coefficient</th><th>Relative contribution</th></tr></thead>
+  <tbody id="importance"></tbody>
+</table>
+<h2>Model quality</h2>
+<pre id="quality">Held-out 80/20 split. Metrics load after the first prediction.</pre>
+<script>
+const points = __POINTS__;
+const dots = document.querySelector("#dots");
+const maxValue = Math.max(...points.flatMap(point => [point.actual, point.predicted]), 1);
+for (const point of points) {
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("cx", 45 + point.actual / maxValue * 420);
+  circle.setAttribute("cy", 255 - point.predicted / maxValue * 220);
+  circle.setAttribute("r", "3");
+  circle.setAttribute("fill", "#0969da");
+  circle.setAttribute("opacity", ".65");
+  dots.append(circle);
+}
+
+const table = document.querySelector("#importance");
+function renderImportance(values) {
+  const maxAbs = Math.max(...Object.values(values).map(Math.abs), 1e-9);
+  table.replaceChildren(...Object.entries(values).map(([name, value]) => {
+    const row = document.createElement("tr");
+    const feature = document.createElement("td");
+    feature.textContent = name;
+    const coefficient = document.createElement("td");
+    coefficient.textContent = value.toFixed(4);
+    const bar = document.createElement("td");
+    const fill = document.createElement("div");
+    fill.style.height = "12px";
+    fill.style.width = `${Math.abs(value) / maxAbs * 180}px`;
+    fill.style.background = value < 0 ? "#cf222e" : "#1a7f37";
+    bar.append(fill);
+    row.append(feature, coefficient, bar);
+    return row;
+  }));
+}
+
+document.querySelector("#prediction").addEventListener("submit", async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  for (const key of Object.keys(data)) data[key] = Number(data[key]);
+  const response = await fetch("/predict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+  const result = await response.json();
+  document.querySelector("#result").textContent = response.ok
+    ? `${result.predicted_time_sec}s — ${result.recommendation}`
+    : `Error ${response.status}: ${result.detail}`;
+  if (response.ok) {
+    renderImportance(result.feature_importance);
+    document.querySelector("#quality").textContent =
+      JSON.stringify(result.model_metrics, null, 2);
+  }
+});
+</script>
+</html>

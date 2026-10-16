@@ -2,7 +2,6 @@ import ast
 import re
 from dataclasses import dataclass
 
-
 SUPPORTED = {".py": "python", ".js": "javascript", ".java": "java"}
 
 
@@ -114,7 +113,11 @@ def _parse_javascript(source: str) -> ParsedFile:
             if (line, name) in found:
                 continue
             found.add((line, name))
-            params = [value.strip().split("=")[0].strip() for value in raw_params.split(",") if value.strip()]
+            params = [
+                value.strip().split("=")[0].strip()
+                for value in raw_params.split(",")
+                if value.strip()
+            ]
             class_name = next(
                 (item["name"] for item, start, end in class_spans if start < match.start() < end),
                 None,

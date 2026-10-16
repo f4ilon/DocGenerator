@@ -2,6 +2,7 @@
 testpaths = ["tests"]
 addopts = "-q"
 markers = ["integration: requires Docker and a PostgreSQL Testcontainer"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
@@ -9,4 +10,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
-

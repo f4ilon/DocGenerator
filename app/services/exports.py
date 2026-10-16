@@ -34,10 +34,8 @@ def documentation_markdown(project: Project, files: list[SourceFile]) -> str:
 def render_html(markdown: str) -> str:
     escaped = html.escape(markdown)
     return (
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
-        "<title>DocGen export</title><body><pre>"
-        + escaped
-        + "</pre></body></html>"
+        '<!doctype html><html lang="en"><meta charset="utf-8">'
+        "<title>DocGen export</title><body><pre>" + escaped + "</pre></body></html>"
     )
 
 

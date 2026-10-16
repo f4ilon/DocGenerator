@@ -50,7 +50,9 @@ def predict(features: list[float]) -> dict:
     predicted_time = max(0.0, float(model.predict([features])[0]))
     importance = dict(zip(FEATURES, map(float, model.coef_), strict=True))
     recommendation = (
-        "Split the project into smaller modules." if predicted_time > 60 else "Generation should finish within 60 seconds."
+        "Split the project into smaller modules."
+        if predicted_time > 60
+        else "Generation should finish within 60 seconds."
     )
     return {
         "predicted_time_sec": round(predicted_time, 2),

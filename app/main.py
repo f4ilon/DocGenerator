@@ -9,7 +9,8 @@ import subprocess
 import tempfile
 import time
 import zipfile
-from pathlib import PurePosixPath
+from contextlib import asynccontextmanager
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 import httpx
@@ -64,7 +65,9 @@ PARSE_DURATION = Histogram(
     "docgen_parse_duration_seconds", "Time spent parsing source files", ["language"]
 )
 FILES_PARSED = Counter("docgen_files_parsed_total", "Number of successfully parsed source files")
-COVERAGE_PERCENT = Gauge("docgen_coverage_percent", "Latest documentation coverage by project", ["project_id"])
+COVERAGE_PERCENT = Gauge(
+    "docgen_coverage_percent", "Latest documentation coverage by project", ["project_id"]
+)
 EXPORT_DURATION = Histogram(
     "docgen_export_duration_seconds", "Time spent creating exports", ["format"]
 )
@@ -76,23 +79,25 @@ HTTP_DURATION = Histogram("http_request_duration_seconds", "HTTP request duratio
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
+    url = database_url or os.getenv("DATABASE_URL", "sqlite:///./docgen.db")
+    engine, session_factory = make_session_factory(url)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        Base.metadata.create_all(bind=engine)
+        try:
+            yield
+        finally:
+            engine.dispose()
+
     app = FastAPI(
         title="DocGen",
         description="Source-code documentation generator and digital twin",
         version="1.0.0",
+        lifespan=lifespan,
     )
-    url = database_url or os.getenv("DATABASE_URL", "sqlite:///./docgen.db")
-    engine, session_factory = make_session_factory(url)
     app.state.engine = engine
     app.state.session_factory = session_factory
-
-    @app.on_event("startup")
-    def initialize_database() -> None:
-        Base.metadata.create_all(bind=engine)
-
-    @app.on_event("shutdown")
-    def close_engine() -> None:
-        engine.dispose()
 
     def db_session():
         session = session_factory()
@@ -127,9 +132,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     def coverage_for(session: Session, project: Project) -> dict:
         functions = [
-            function
-            for source_file in project.files
-            for function in source_file.functions
+            function for source_file in project.files for function in source_file.functions
         ]
         uncovered = []
         documented = 0
@@ -176,9 +179,13 @@ def create_app(database_url: str | None = None) -> FastAPI:
         session.flush()
         try:
             if payload.source:
-                input_files = _source_files(payload.source, int(os.getenv("MAX_UPLOAD_BYTES", "52428800")))
+                input_files = _source_files(
+                    payload.source, int(os.getenv("MAX_UPLOAD_BYTES", "52428800"))
+                )
                 if len(input_files) > 1000:
-                    raise HTTPException(status_code=422, detail="A project may contain at most 1000 files")
+                    raise HTTPException(
+                        status_code=422, detail="A project may contain at most 1000 files"
+                    )
                 for path, content in input_files:
                     _upsert_source_file(session, project, path, content)
             session.commit()
@@ -199,8 +206,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
         ).all()
         counts = dict(
             session.execute(
-                select(SourceFile.project_id, func.count(SourceFile.id))
-                .group_by(SourceFile.project_id)
+                select(SourceFile.project_id, func.count(SourceFile.id)).group_by(
+                    SourceFile.project_id
+                )
             ).all()
         )
         return ProjectList(
@@ -295,7 +303,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
             parsed_count += 1
             classes_count += len(result.classes)
         languages = {file.language for file in project.files}
-        project.language = next(iter(languages)) if len(languages) == 1 else ("mixed" if languages else None)
+        project.language = (
+            next(iter(languages)) if len(languages) == 1 else ("mixed" if languages else None)
+        )
         session.commit()
         FILES_PARSED.inc(parsed_count)
         function_count = len(complexities)
@@ -304,7 +314,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
             files_parsed=parsed_count,
             classes=classes_count,
             functions=function_count,
-            average_complexity=round(sum(complexities) / function_count, 2) if function_count else 0.0,
+            average_complexity=round(sum(complexities) / function_count, 2)
+            if function_count
+            else 0.0,
         )
 
     @app.post("/projects/{project_id}/generate", response_model=GenerateResponse)
@@ -315,7 +327,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
     ):
         project = project_or_404(session, project_id)
         if not any(file.functions for file in project.files):
-            raise HTTPException(status_code=409, detail="Parse the project before generating documentation")
+            raise HTTPException(
+                status_code=409, detail="Parse the project before generating documentation"
+            )
         client = AIClient()
         drafts = []
         warnings = []
@@ -327,7 +341,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
                     style = payload.style if payload else "google"
                     generated_text, model_name = await client.generate(function, source, style)
                 except httpx.HTTPError as exc:
-                    raise HTTPException(status_code=502, detail=f"AI service request failed: {exc}") from exc
+                    raise HTTPException(
+                        status_code=502, detail=f"AI service request failed: {exc}"
+                    ) from exc
                 except RuntimeError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
                 draft = DocumentationDraft(
@@ -347,7 +363,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
                     )
                 )
                 if model_name == "local-placeholder":
-                    warnings.append("No OPENAI_API_KEY configured; deterministic local drafts were generated.")
+                    warnings.append(
+                        "No OPENAI_API_KEY configured; deterministic local drafts were generated."
+                    )
         session.flush()
         coverage = coverage_for(session, project)
         session.add(
@@ -527,7 +545,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
 def _source_files(source, max_upload_bytes: int) -> list[tuple[str, str]]:
     if source.type == "files":
-        return _validated_files([(item.path, item.content) for item in source.files], max_upload_bytes)
+        return _validated_files(
+            [(item.path, item.content) for item in source.files], max_upload_bytes
+        )
     if source.type == "zip":
         if not source.content_base64:
             raise HTTPException(status_code=422, detail="ZIP source requires content_base64")
@@ -540,8 +560,13 @@ def _source_files(source, max_upload_bytes: int) -> list[tuple[str, str]]:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 members = [item for item in archive.infolist() if not item.is_dir()]
-                if len(members) > 1000 or sum(item.file_size for item in members) > max_upload_bytes:
-                    raise HTTPException(status_code=413, detail="ZIP exceeds file count or expanded size limit")
+                if (
+                    len(members) > 1000
+                    or sum(item.file_size for item in members) > max_upload_bytes
+                ):
+                    raise HTTPException(
+                        status_code=413, detail="ZIP exceeds file count or expanded size limit"
+                    )
                 contents = []
                 for item in members:
                     path = _safe_path(item.filename)
@@ -550,9 +575,13 @@ def _source_files(source, max_upload_bytes: int) -> list[tuple[str, str]]:
                     try:
                         contents.append((path, archive.read(item).decode("utf-8")))
                     except UnicodeDecodeError as exc:
-                        raise HTTPException(status_code=422, detail=f"Source file is not UTF-8: {path}") from exc
+                        raise HTTPException(
+                            status_code=422, detail=f"Source file is not UTF-8: {path}"
+                        ) from exc
         except zipfile.BadZipFile as exc:
-            raise HTTPException(status_code=422, detail="Source is not a valid ZIP archive") from exc
+            raise HTTPException(
+                status_code=422, detail="Source is not a valid ZIP archive"
+            ) from exc
         return _validated_files(contents, max_upload_bytes)
     if source.url is None:
         raise HTTPException(status_code=422, detail="Git source requires a URL")
@@ -563,7 +592,9 @@ def _source_files(source, max_upload_bytes: int) -> list[tuple[str, str]]:
         or parsed_url.username
         or parsed_url.password
     ):
-        raise HTTPException(status_code=422, detail="Git URL must use HTTPS on a supported public host")
+        raise HTTPException(
+            status_code=422, detail="Git URL must use HTTPS on a supported public host"
+        )
     try:
         with tempfile.TemporaryDirectory(prefix="docgen-git-") as temp:
             destination = os.path.join(temp, "repo")
@@ -584,7 +615,9 @@ def _source_files(source, max_upload_bytes: int) -> list[tuple[str, str]]:
                         with open(path, "rb") as file:
                             raw = file.read(max_upload_bytes + 1)
                         if len(raw) > max_upload_bytes:
-                            raise HTTPException(status_code=413, detail="A source file exceeds the 50 MB limit")
+                            raise HTTPException(
+                                status_code=413, detail="A source file exceeds the 50 MB limit"
+                            )
                         found.append((relative, raw.decode("utf-8")))
             return _validated_files(found, max_upload_bytes)
     except subprocess.TimeoutExpired as exc:
@@ -593,7 +626,9 @@ def _source_files(source, max_upload_bytes: int) -> list[tuple[str, str]]:
         detail = (exc.stderr or "Git clone failed")[-1000:]
         raise HTTPException(status_code=422, detail=detail) from exc
     except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail="Git source contains a non-UTF-8 source file") from exc
+        raise HTTPException(
+            status_code=422, detail="Git source contains a non-UTF-8 source file"
+        ) from exc
 
 
 def _validated_files(files: list[tuple[str, str]], max_upload_bytes: int) -> list[tuple[str, str]]:
@@ -605,7 +640,9 @@ def _validated_files(files: list[tuple[str, str]], max_upload_bytes: int) -> lis
     for path, content in files:
         safe_path = _safe_path(path)
         if language_for_path(safe_path) is None:
-            raise HTTPException(status_code=422, detail=f"Unsupported source file extension: {safe_path}")
+            raise HTTPException(
+                status_code=422, detail=f"Unsupported source file extension: {safe_path}"
+            )
         if safe_path in seen:
             raise HTTPException(status_code=422, detail=f"Duplicate source file path: {safe_path}")
         seen.add(safe_path)
@@ -671,7 +708,9 @@ def _function_read(function: FunctionEntity) -> FunctionRead:
         line_start=function.line_start,
         line_end=function.line_end,
         complexity=function.complexity,
-        documented=bool(function.docblock_raw or (function.drafts and function.drafts[-1].generated_text)),
+        documented=bool(
+            function.docblock_raw or (function.drafts and function.drafts[-1].generated_text)
+        ),
         docblock=function.docblock_raw,
     )
 
@@ -713,58 +752,10 @@ def _style_violations(functions: list[FunctionEntity]) -> list[dict]:
 
 
 def _ml_dashboard_html() -> str:
-    page = """<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>DocGen digital twin</title>
-<style>
-body{font:16px system-ui;max-width:850px;margin:3rem auto;padding:0 1rem;color:#182230}
-label{display:inline-grid;gap:.3rem;margin:.5rem}input{padding:.5rem;width:8rem}
-button{padding:.7rem 1.2rem;background:#0969da;color:white;border:0;border-radius:5px}
-pre{white-space:pre-wrap;background:#f6f8fa;padding:1rem}
-svg{width:100%;max-width:600px;background:#f6f8fa}td,th{padding:.3rem .8rem;text-align:left}
-</style>
-<h1>Generation time digital twin</h1><p>Estimate documentation generation time from project metrics.</p>
-<form id="prediction">
-<label>Files<input name="files" type="number" value="50" min="1" max="1000" required></label>
-<label>Functions<input name="funcs" type="number" value="200" min="0" required></label>
-<label>Complexity<input name="complexity" type="number" value="5" min="1" max="10" step=".1" required></label>
-<label>Cycles / branches<input name="cycles" type="number" value="10" min="0" required></label>
-<label>Documented before (%)<input name="doc_before" type="number" value="30" min="0" max="100" step=".1" required></label>
-<label>Python<input name="lang_py" type="number" value="1" min="0" max="1" required></label>
-<button>Predict</button></form><pre id="result">Submit project metrics to see a prediction.</pre>
-<h2>Actual vs predicted (held-out test data)</h2>
-<svg viewBox="0 0 500 300" role="img" aria-label="Actual versus predicted generation time">
-<line x1="45" y1="255" x2="475" y2="255" stroke="#667"/><line x1="45" y1="20" x2="45" y2="255" stroke="#667"/>
-<text x="210" y="290">Actual time (seconds)</text><text transform="translate(16 190) rotate(-90)">Predicted time (seconds)</text>
-<g id="dots"></g></svg>
-<h2>Feature importance (model coefficients)</h2>
-<table><thead><tr><th>Feature</th><th>Coefficient</th><th>Relative contribution</th></tr></thead><tbody id="importance"></tbody></table>
-<h2>Model quality</h2><pre id="quality">Held-out 80/20 split. Metrics load after the first prediction.</pre>
-<script>
-const points=__POINTS__,dots=document.querySelector('#dots');
-const max=Math.max(...points.flatMap(point=>[point.actual,point.predicted]),1);
-for(const point of points){const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');
- circle.setAttribute('cx',45+point.actual/max*420);circle.setAttribute('cy',255-point.predicted/max*220);
- circle.setAttribute('r','3');circle.setAttribute('fill','#0969da');circle.setAttribute('opacity','.65');dots.append(circle)}
-const table=document.querySelector('#importance');
-function renderImportance(values){const maxAbs=Math.max(...Object.values(values).map(Math.abs),1e-9);
- table.replaceChildren(...Object.entries(values).map(([name,value])=>{const row=document.createElement('tr');
- const feature=document.createElement('td');feature.textContent=name;const coefficient=document.createElement('td');
- coefficient.textContent=value.toFixed(4);const bar=document.createElement('td');
- const fill=document.createElement('div');fill.style.height='12px';fill.style.width=`${Math.abs(value)/maxAbs*180}px`;
- fill.style.background=value<0?'#cf222e':'#1a7f37';bar.append(fill);
- row.append(feature,coefficient,bar);return row}))}
-document.querySelector('#prediction').addEventListener('submit',async event=>{
- event.preventDefault();const data=Object.fromEntries(new FormData(event.target));
- for(const key of Object.keys(data))data[key]=Number(data[key]);
- const response=await fetch('/predict',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
- const result=await response.json();document.querySelector('#result').textContent=response.ok?
- `${result.predicted_time_sec}s — ${result.recommendation}`:`Error ${response.status}: ${result.detail}`;
- if(response.ok){renderImportance(result.feature_importance);document.querySelector('#quality').textContent=
- JSON.stringify(result.model_metrics,null,2)}
-});
-</script></html>"""
-    return page.replace("__POINTS__", json.dumps(model_plot_points()))
+    template = Path(__file__).parent / "templates" / "ml_dashboard.html"
+    return template.read_text(encoding="utf-8").replace(
+        "__POINTS__", json.dumps(model_plot_points())
+    )
 
 
 app = create_app()

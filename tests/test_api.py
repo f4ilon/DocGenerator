@@ -26,7 +26,12 @@ def test_parse_project_success(client, project_id):
             "files": [
                 {
                     "path": "sample.py",
-                    "content": 'class Greeter:\n    def greet(self, name):\n        """Say hello."""\n        return name\n',
+                    "content": (
+                        "class Greeter:\n"
+                        "    def greet(self, name):\n"
+                        '        """Say hello."""\n'
+                        "        return name\n"
+                    ),
                 }
             ]
         },
@@ -48,9 +53,7 @@ def test_generate_docs_success(client, parsed_project):
 
 def test_export_markdown_success(client, parsed_project):
     client.post(f"/projects/{parsed_project}/generate")
-    response = client.post(
-        f"/projects/{parsed_project}/export", json={"format": "markdown"}
-    )
+    response = client.post(f"/projects/{parsed_project}/export", json={"format": "markdown"})
     assert response.status_code == 201
     download = client.get(response.json()["download_url"])
     assert download.status_code == 200
@@ -158,9 +161,7 @@ def test_search_finds_generated_docs(client, parsed_project):
 
 
 def test_generate_jsdoc_style(client, parsed_project):
-    response = client.post(
-        f"/projects/{parsed_project}/generate", json={"style": "jsdoc"}
-    )
+    response = client.post(f"/projects/{parsed_project}/generate", json={"style": "jsdoc"})
     assert response.status_code == 200
     assert response.json()["drafts"][0]["generated_text"].startswith("/**")
 
@@ -175,9 +176,7 @@ def test_project_update_and_export_history(client, parsed_project):
     updated = client.patch(f"/projects/{parsed_project}", json={"name": "renamed"})
     assert updated.status_code == 200
     assert updated.json()["name"] == "renamed"
-    export = client.post(
-        f"/projects/{parsed_project}/export", json={"format": "markdown"}
-    )
+    export = client.post(f"/projects/{parsed_project}/export", json={"format": "markdown"})
     assert export.status_code == 201
     history = client.get(f"/projects/{parsed_project}/exports")
     assert history.status_code == 200
@@ -207,22 +206,25 @@ def test_generate_requires_successful_parse(client, project_id):
 
 
 def test_export_html_and_plantuml(client, parsed_project):
-    html_export = client.post(
-        f"/projects/{parsed_project}/export", json={"format": "html"}
-    )
-    uml_export = client.post(
-        f"/projects/{parsed_project}/export", json={"format": "plantuml"}
-    )
+    html_export = client.post(f"/projects/{parsed_project}/export", json={"format": "html"})
+    uml_export = client.post(f"/projects/{parsed_project}/export", json={"format": "plantuml"})
     assert html_export.status_code == 201
-    assert client.get(html_export.json()["download_url"]).headers["content-type"].startswith("text/html")
+    assert (
+        client.get(html_export.json()["download_url"])
+        .headers["content-type"]
+        .startswith("text/html")
+    )
     assert uml_export.status_code == 201
     assert client.get(uml_export.json()["download_url"]).text.startswith("@startuml")
 
 
-@pytest.mark.parametrize("language,source", [
-    ("javascript", "class Greeter {\n  greet(name) { return name; }\n}"),
-    ("java", "class Greeter {\n  public String greet(String name) { return name; }\n}"),
-])
+@pytest.mark.parametrize(
+    "language,source",
+    [
+        ("javascript", "class Greeter {\n  greet(name) { return name; }\n}"),
+        ("java", "class Greeter {\n  public String greet(String name) { return name; }\n}"),
+    ],
+)
 def test_parse_supported_languages(client, project_id, language, source):
     extension = {"javascript": "js", "java": "java"}[language]
     response = client.post(

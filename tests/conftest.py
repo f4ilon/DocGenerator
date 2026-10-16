@@ -26,4 +26,3 @@ def parsed_project(client, project_id):
     )
     assert response.status_code == 202
     return project_id
-
